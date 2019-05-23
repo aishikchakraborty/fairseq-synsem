@@ -98,6 +98,7 @@ class MultilingualTranslationTask(FairseqTask):
     def __init__(self, args, dicts, training):
         super().__init__(args)
         self.dicts = dicts
+        self.lang2idx = {}
         self.lang_pairs = args.lang_pairs
         # eval_lang_pairs for multilingual translation is usually all of the
         # lang_pairs. However for other multitask settings or when we want to
@@ -157,13 +158,16 @@ class MultilingualTranslationTask(FairseqTask):
         if self.args.encoder_langtok is None:
             return self.dicts[src_lang].eos()
         if self.args.encoder_langtok == 'src':
+            self.lang2idx[src_lang] = _lang_token_index(self.dicts[src_lang], src_lang)
             return _lang_token_index(self.dicts[src_lang], src_lang)
         else:
+            self.lang2idx[tgt_lang] = _lang_token_index(self.dicts[tgt_lang], tgt_lang)
             return _lang_token_index(self.dicts[src_lang], tgt_lang)
 
     def get_decoder_langtok(self, tgt_lang):
         if not self.args.decoder_langtok:
             return self.dicts[tgt_lang].eos()
+        self.lang2idx[tgt_lang] = _lang_token_index(self.dicts[tgt_lang], tgt_lang)
         return _lang_token_index(self.dicts[tgt_lang], tgt_lang)
 
     def alter_dataset_langtok(self, lang_pair_dataset,
@@ -175,6 +179,7 @@ class MultilingualTranslationTask(FairseqTask):
         if self.args.encoder_langtok is not None and src_eos is not None \
            and src_lang is not None and tgt_lang is not None:
             new_src_eos = self.get_encoder_langtok(src_lang, tgt_lang)
+
         else:
             src_eos = None
 
