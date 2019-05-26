@@ -59,6 +59,8 @@ class MultilingualTransformerModel(FairseqMultiModel):
 
     def __init__(self, encoders, decoders):
         super().__init__(encoders, decoders)
+        # self.N = None
+        # self.M = None
 
     @staticmethod
     def add_args(parser):
@@ -86,6 +88,8 @@ class MultilingualTransformerModel(FairseqMultiModel):
         if not hasattr(args, 'max_target_positions'):
             args.max_target_positions = 1024
 
+
+
         src_langs = [lang_pair.split('-')[0] for lang_pair in task.model_lang_pairs]
         tgt_langs = [lang_pair.split('-')[1] for lang_pair in task.model_lang_pairs]
 
@@ -93,8 +97,15 @@ class MultilingualTransformerModel(FairseqMultiModel):
         lang2idx2idx = [-1]*(max(task.lang2idx.values())+1)
 
 
+        # import pdb; pdb.set_trace()
         for idx, l in enumerate(lang2idx.keys()):
             lang2idx2idx[lang2idx[l]] = idx
+        # define semantic and syntactic matrices
+        no_langs = len([i for i in lang2idx2idx if i>-1])
+
+        M = nn.Parameter(torch.randn(args.encoder_embed_dim, args.encoder_embed_dim//2))
+        N = nn.Parameter(torch.randn(no_langs, args.encoder_embed_dim, args.encoder_embed_dim//2))
+
 
         if args.share_encoders:
             args.share_encoder_embeddings = True
@@ -154,6 +165,7 @@ class MultilingualTransformerModel(FairseqMultiModel):
         # encoders/decoders for each language
         lang_encoders, lang_decoders = {}, {}
 
+
         def get_encoder(lang):
             if lang not in lang_encoders:
                 if shared_encoder_embed_tokens is not None:
@@ -162,7 +174,7 @@ class MultilingualTransformerModel(FairseqMultiModel):
                     encoder_embed_tokens = build_embedding(
                         task.dicts[lang], args.encoder_embed_dim, args.encoder_embed_path
                     )
-                lang_encoders[lang] = TransformerEncoder(args, task.dicts[lang], encoder_embed_tokens, lang2idx2idx)
+                lang_encoders[lang] = TransformerEncoder(args, task.dicts[lang], encoder_embed_tokens, lang2idx2idx, M, N)
             return lang_encoders[lang]
 
         def get_decoder(lang):
@@ -173,7 +185,7 @@ class MultilingualTransformerModel(FairseqMultiModel):
                     decoder_embed_tokens = build_embedding(
                         task.dicts[lang], args.decoder_embed_dim, args.decoder_embed_path
                     )
-                lang_decoders[lang] = TransformerDecoder(args, task.dicts[lang], decoder_embed_tokens)
+                lang_decoders[lang] = TransformerDecoder(args, task.dicts[lang], decoder_embed_tokens, lang2idx2idx, M, N)
             return lang_decoders[lang]
 
         # shared encoders/decoders (if applicable)
@@ -211,20 +223,21 @@ class TransformerEncoder(FairseqEncoder):
         embed_tokens (torch.nn.Embedding): input embedding
     """
 
-    def __init__(self, args, dictionary, embed_tokens, lang2idx2idx):
+    def __init__(self, args, dictionary, embed_tokens, lang2idx2idx, M, N):
         super().__init__(dictionary)
         self.dropout = args.dropout
 
         embed_dim = embed_tokens.embedding_dim
 
         # define a dict of lang vocab id to its index in syntactic matrix
-        self.lang2idx2idx = torch.tensor(lang2idx2idx)
+        self.lang2idx2idx = torch.LongTensor(lang2idx2idx)
+        # import pdb;pdb.set_trace()
 
         # define semantic and syntactic matrices
         no_langs = len([i for i in self.lang2idx2idx if i>-1])
 
-        self.M = nn.Parameter(torch.randn(embed_dim, embed_dim//2))
-        self.N = nn.Parameter(torch.randn(no_langs, embed_dim, embed_dim//2))
+        self.M = M
+        self.N = N
 
         self.padding_idx = embed_tokens.padding_idx
         self.max_source_positions = args.max_source_positions
@@ -268,6 +281,7 @@ class TransformerEncoder(FairseqEncoder):
         x = x.view(bsz*ts, -1)
         N_t = self.N[self.lang2idx2idx[src_tokens[:, -1]], :, :].squeeze(0)
 
+        # import pdb; pdb.set_trace()
         sem_emb = torch.mm(x, self.M)
 
         x = x.view(bsz, ts, -1)
@@ -359,14 +373,25 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             final decoder layer (default: True).
     """
 
-    def __init__(self, args, dictionary, embed_tokens, no_encoder_attn=False, final_norm=True):
+    def __init__(self, args, dictionary, embed_tokens, lang2idx2idx, M, N, no_encoder_attn=False, final_norm=True):
         super().__init__(dictionary)
         self.dropout = args.dropout
+
+
         self.share_input_output_embed = args.share_decoder_input_output_embed
 
         input_embed_dim = embed_tokens.embedding_dim
         embed_dim = args.decoder_embed_dim
         self.output_embed_dim = args.decoder_output_dim
+
+        # define a dict of lang vocab id to its index in syntactic matrix
+        self.lang2idx2idx = torch.LongTensor(lang2idx2idx)
+
+        # define semantic and syntactic matrices
+        no_langs = len([i for i in self.lang2idx2idx if i>-1])
+
+        self.M = M
+        self.N = N
 
         padding_idx = embed_tokens.padding_idx
         self.max_target_positions = args.max_target_positions
@@ -451,6 +476,18 @@ class TransformerDecoder(FairseqIncrementalDecoder):
 
         # embed tokens and positions
         x = self.embed_scale * self.embed_tokens(prev_output_tokens)
+
+        bsz = x.size(0)
+        ts = x.size(1)
+        x = x.view(bsz*ts, -1)
+        N_t = self.N[self.lang2idx2idx[prev_output_tokens[:, 0]], :, :].squeeze(0)
+
+        sem_emb = torch.mm(x, self.M)
+
+        x = x.view(bsz, ts, -1)
+        syn_emb = torch.bmm(x, N_t)
+
+        x = torch.cat((sem_emb, syn_emb.view(bsz*ts, -1)), dim=1).view(bsz, ts, -1) # reconstruction
 
         if self.project_in_dim is not None:
             x = self.project_in_dim(x)
@@ -814,6 +851,18 @@ def multilingual_transformer_iwslt_de_en(args):
     args.encoder_attention_heads = getattr(args, 'encoder_attention_heads', 4)
     args.encoder_layers = getattr(args, 'encoder_layers', 6)
     args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 512)
+    args.decoder_ffn_embed_dim = getattr(args, 'decoder_ffn_embed_dim', 1024)
+    args.decoder_attention_heads = getattr(args, 'decoder_attention_heads', 4)
+    args.decoder_layers = getattr(args, 'decoder_layers', 6)
+    base_multilingual_architecture(args)
+
+@register_model_architecture('synsem_transformer', 'synsem_transformer_iwslt_de_en_small')
+def multilingual_transformer_iwslt_de_en(args):
+    args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 128)
+    args.encoder_ffn_embed_dim = getattr(args, 'encoder_ffn_embed_dim', 1024)
+    args.encoder_attention_heads = getattr(args, 'encoder_attention_heads', 4)
+    args.encoder_layers = getattr(args, 'encoder_layers', 6)
+    args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 128)
     args.decoder_ffn_embed_dim = getattr(args, 'decoder_ffn_embed_dim', 1024)
     args.decoder_attention_heads = getattr(args, 'decoder_attention_heads', 4)
     args.decoder_layers = getattr(args, 'decoder_layers', 6)

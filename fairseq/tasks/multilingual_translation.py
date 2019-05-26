@@ -159,6 +159,7 @@ class MultilingualTranslationTask(FairseqTask):
             return self.dicts[src_lang].eos()
         if self.args.encoder_langtok == 'src':
             self.lang2idx[src_lang] = _lang_token_index(self.dicts[src_lang], src_lang)
+            self.lang2idx[tgt_lang] = _lang_token_index(self.dicts[tgt_lang], tgt_lang)
             return _lang_token_index(self.dicts[src_lang], src_lang)
         else:
             self.lang2idx[tgt_lang] = _lang_token_index(self.dicts[tgt_lang], tgt_lang)
