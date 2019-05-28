@@ -29,7 +29,7 @@ idx2idx2lang = {i.item():idx for idx, i in enumerate(lang2idx2idx)}
 # import pdb; pdb.set_trace()
 
 embed_matrix = model.models['de-en'].encoder.embed_tokens.weight
-
+print(embed_matrix.size())
 sem_matrix = torch.mm(embed_matrix, M)
 torch.save(sem_matrix, 'embeddings/sem_matrix.pb')
 

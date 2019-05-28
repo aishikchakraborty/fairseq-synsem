@@ -1,7 +1,7 @@
 TEXT=synsem/iwslt17.de_fr.en.bpe16k
 
 fairseq-preprocess \
-    --source-lang de --target-lang en \
+    --source-lang en --target-lang de \
     --task multilingual_translation \
     --trainpref $TEXT/train.de-en --validpref $TEXT/valid.de-en \
     --joined-dictionary \
