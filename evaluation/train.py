@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 import numpy as np
 import random
 import argparse
@@ -13,7 +14,7 @@ import mmap
 import _pickle as pickle
 
 parser = argparse.ArgumentParser(description='PyTorch Wikitext-2 RNN/LSTM Language Model')
-parser.add_argument('--data', type=str, default='data/snli_1.0/',
+parser.add_argument('--data', type=str, default='data/multinli_1.0/',
                     help='location of the data corpus')
 parser.add_argument('--emb', type=str, default='../embeddings',
                     help='location of the data corpus')
@@ -35,6 +36,8 @@ parser.add_argument('--batch-size', type=int, default=32, metavar='N',
                     help='batch size')
 parser.add_argument('--save', type=str, default='models/',
                     help='path to save the final model')
+parser.add_argument('--hidden-dim', type=int, default=300,
+                    help='hidden dimension size')
 parser.add_argument('--save-emb', type=str, default='embeddings/',
                     help='path to save the final model')
 parser.add_argument('--onnx-export', type=str, default='',
@@ -95,34 +98,43 @@ def get_num_lines(file_path):
 
 def load_dataset(mode='train'):
     s1, s2, label = [], [], []
-    with open(os.path.join(args.data, 'snli_1.0_' + mode + '.jsonl'), 'r') as f:
-        for lines in tqdm(f, total=get_num_lines(os.path.join(args.data, 'snli_1.0_' + mode + '.jsonl'))):
+    with open(os.path.join(args.data, 'multinli_1.0_' + mode + '.jsonl'), 'r') as f:
+        for lines in tqdm(f, total=get_num_lines(os.path.join(args.data, 'multinli_1.0_' + mode + '.jsonl'))):
             lines = json.loads(lines.rstrip('\n'))
-            s1.append(convert_seq_to_id(lines['sentence1']))
-            s2.append(convert_seq_to_id(lines['sentence2']))
             try:
                 label.append(gold_label2idx[lines['gold_label']])
+                s1.append(convert_seq_to_id(lines['sentence1']))
+                s2.append(convert_seq_to_id(lines['sentence2']))
             except:
                 continue
+
     return s1, s2, label
 
 print('Loading dataset...')
 
-if os.path.exists('data/snli_train.pb') and os.path.exists('data/snli_val.pb'):
-    train_data = pickle.load(open('data/snli_train.pb', 'rb'))
-    val_data = pickle.load(open('data/snli_val.pb', 'rb'))
+if os.path.exists('data/multinli_train.pb') and os.path.exists('data/multinli_val.pb'):
+    train_data = pickle.load(open('data/multinli_train.pb', 'rb'))
+    val_data = pickle.load(open('data/multinli_val.pb', 'rb'))
     # test_data = pickle.load(open('data/multinli_test.pb', 'rb'))
 
     train_s1 , train_s2, train_y = train_data[0], train_data[1], train_data[2]
     val_s1 , val_s2, val_y = val_data[0], val_data[1], val_data[2]
+
+    assert len(train_s1) == len(train_y), "Length Mismatch"
+    assert len(train_s2) == len(train_y), "Length Mismatch"
+
+    assert len(val_s1) == len(val_y), "Length Mismatch"
+    assert len(val_s1) == len(val_y), "Length Mismatch"
+
+
     # test_s1 , test_s2, test_y = test_data[0], test_data[1], test_data[2]
 else:
     train_s1 , train_s2, train_y = load_dataset('train')
-    val_s1 , val_s2, val_y = load_dataset('dev')
+    val_s1 , val_s2, val_y = load_dataset('dev_matched')
     # test_s1 , test_s2, test_y = load_dataset('test')
 
-    pickle.dump((train_s1, train_s2, train_y), open('data/snli_train.pb', 'wb'))
-    pickle.dump((val_s1, val_s2, val_y), open('data/snli_val.pb', 'wb'))
+    pickle.dump((train_s1, train_s2, train_y), open('data/multinli_train.pb', 'wb'))
+    pickle.dump((val_s1, val_s2, val_y), open('data/multinli_val.pb', 'wb'))
     # pickle.dump((test_s1, test_s2, test_y), open('data/multinli_test.pb', 'wb'))
 
 print('Finished loading dataset.')
@@ -130,19 +142,20 @@ print('Finished loading dataset.')
 class CBOW(nn.Module):
     def __init__(self, num_labels, vocab_size, embedding_dim, pretrained_embed_path, pad_idx):
         super(CBOW, self).__init__()
-        self.emb = nn.Embedding(vocab_size, embedding_dim)
-        self.l1 = nn.Linear(2*embedding_dim, 500)
-        self.l2 = nn.Linear(500, 500)
-        self.l3 = nn.Linear(500, 500)
-        self.l4 = nn.Linear(500, num_labels)
+        self.emb = nn.Embedding(vocab_size, embedding_dim, padding_idx=pad_idx)
+        self.l1 = nn.Linear(4*embedding_dim, args.hidden_dim)
+        self.l2 = nn.Linear(args.hidden_dim, args.hidden_dim)
+        self.l3 = nn.Linear(args.hidden_dim, args.hidden_dim)
+        self.l4 = nn.Linear(args.hidden_dim, num_labels)
         self.relu = nn.ReLU()
         self.pad_idx = pad_idx
 
         self.init_weights(pretrained_embed_path)
 
     def init_weights(self, pretrained_embed_path):
+        # return
         self.emb.weight.data.copy_(pretrained_embed_path)
-        # self.emb.weight.requires_grad = False
+        self.emb.weight.requires_grad = False
 
     def forward(self, x1, x2):
         emb_out1 = self.emb(x1)
@@ -154,8 +167,8 @@ class CBOW(nn.Module):
         # mask2 = 1 - (x2 == self.pad_idx).float()
         sentence_emb2 = torch.mean(emb_out2, dim=1)
 
-        sentence_emb = torch.cat((sentence_emb1, sentence_emb2), dim=1)
-        # sentence_emb = torch.cat((sentence_emb1, sentence_emb2, torch.abs(sentence_emb1-sentence_emb2), sentence_emb1*sentence_emb2), dim=1)
+        # sentence_emb = torch.cat((sentence_emb1, sentence_emb2), dim=1)
+        sentence_emb = torch.cat((sentence_emb1, sentence_emb2, torch.abs(sentence_emb1-sentence_emb2), sentence_emb1*sentence_emb2), dim=1)
 
         out = self.l4(self.relu(self.l3(self.relu(self.l2(self.relu(self.l1(sentence_emb)))))))
         return out
@@ -169,14 +182,16 @@ def pad_sequences(s):
     # print(s)
     lengths = [len(s1) for s1 in s]
     longest_sent = max(lengths)
-    padded_X = np.ones((args.batch_size, longest_sent)) * pad_token
+    padded_X = np.ones((args.batch_size, longest_sent), dtype=np.int64) * pad_token
     for i, x_len in enumerate(lengths):
         sequence = s[i]
         padded_X[i, 0:x_len] = sequence[:x_len]
+    # print(padded_X)
     return padded_X
 
 
 def evaluate(data_source):
+    cbow.eval()
     total_loss = 0
     total_acc = 0
 
@@ -198,10 +213,11 @@ def evaluate(data_source):
 
             predictions = cbow(batch_s1, batch_s2)
 
-            predictions_np = np.argmax(predictions.cpu().detach().numpy(), axis=1)
+            predictions_np = np.argmax(F.softmax(predictions, dim=1).cpu().detach().numpy(), axis=1)
             acc = np.mean(predictions_np == batch_y.cpu().numpy())
 
             loss = criterion(predictions, batch_y)
+            # print(loss)
 
             total_loss += loss.item()
             total_acc += acc
@@ -216,6 +232,7 @@ def evaluate(data_source):
 
 def train():
     for _ in range(args.epochs):
+        cbow.train()
         total_loss = 0
         total_acc = 0
         patience = 0
@@ -238,7 +255,7 @@ def train():
 
             predictions = cbow(batch_s1, batch_s2)
 
-            predictions_np = np.argmax(predictions.cpu().detach().numpy(), axis=1)
+            predictions_np = np.argmax(F.softmax(predictions, dim=1).cpu().detach().numpy(), axis=1)
             # print(np.mean((predictions_np == batch_y.cpu().numpy()).astype(np.int64)))
             acc = np.mean(predictions_np == batch_y.cpu().numpy())
 
