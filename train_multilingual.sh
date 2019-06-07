@@ -33,8 +33,8 @@ fairseq-train data-bin/iwslt17.de_fr.en.bpe16k/ \
   --warmup-updates 4000 --warmup-init-lr '1e-07' \
   --label-smoothing 0.1 --criterion label_smoothed_cross_entropy \
   --dropout 0.3 --weight-decay 0.0001 \
-  --save-dir checkpoints/multilingual_transformer \
-  --max-tokens 1000 --update-freq 8 --fp16 --max-sentences 8 --batch-size 8
+  --save-dir checkpoints/multilingual_transformer_small \
+  --max-tokens 1000 --update-freq 8 --fp16 --batch-size 64
 
 
 # python save_embeddings.py data-bin/iwslt17.de_fr.en.bpe16k/ --path checkpoints/multilingual_transformer/checkpoint_best.pt --task multilingual_translation --lang-pairs de-en,fr-en --encoder-langtok src --decoder-langtok --gen-subset valid

@@ -98,7 +98,9 @@ for ((i=0;i<${#SRCS[@]};++i)); do
 done
 
 # # learn BPE with sentencepiece
-# TRAIN_FILES=$(for SRC in "${SRCS[@]}"; do echo $DATA/train.${SRC}-${TGT}.${SRC}; echo $DATA/train.${SRC}-${TGT}.${TGT}; done | tr "\n" ",")
+TRAIN_FILES=$(for SRC in "${SRCS[@]}"; do echo $DATA/train.${SRC}-${TGT}.${SRC}; echo $DATA/train.${SRC}-${TGT}.${TGT}; done | tr "\n" " ")
+cat $TRAIN_FILES > $DATA/train_joint.jl
+
 # echo "learning joint BPE over ${TRAIN_FILES}..."
 # python "$SPM_TRAIN" \
 #     --input=$TRAIN_FILES \
