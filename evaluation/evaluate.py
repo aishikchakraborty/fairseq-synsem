@@ -14,7 +14,7 @@ import mmap
 import _pickle as pickle
 
 parser = argparse.ArgumentParser(description='PyTorch Wikitext-2 RNN/LSTM Language Model')
-parser.add_argument('--data', type=str, default='data/multinli_1.0/',
+parser.add_argument('--data', type=str, default='data/XNLI-1.0/',
                     help='location of the data corpus')
 parser.add_argument('--model', type=str, default='cbow_model.pb',
                     help='location of the model')
@@ -30,9 +30,11 @@ parser.add_argument('--cuda', action='store_true',
                     help='use CUDA')
 parser.add_argument('--gpu', type=int, default=0,
                     help='use gpu x')
+parser.add_argument('--emb-type', type=int, default=0,
+                    help='embedding type')
 parser.add_argument('--lang', type=str, default='en',
                     help='language to use for xnli')
-parser.add_argument('--hidden-dim', type=int, default=300,
+parser.add_argument('--hidden-dim', type=int, default=500,
                     help='hidden dimension size')
 parser.add_argument('--batch-size', type=int, default=32, metavar='N',
                     help='batch size')
@@ -63,15 +65,24 @@ vocab = torch.load(args.emb + '/vocab.pb')
 print(vocab[:10])
 w2idx = {w:idx for idx, w in enumerate(vocab)}
 
-sem_emb = torch.load(args.emb + '/sem_matrix.pb')
-syn_emb = torch.load(args.emb + '/en_syn_matrix.pb')
+if args.emb_type == 0:
+    emb = torch.load(args.emb + '/sem_matrix.pb')
+elif args.emb_type == 1:
+    emb = torch.load(args.emb + '/' + args.lang + '_syn_matrix.pb')
+elif args.emb_type == 2:
+    emb = torch.load(args.emb + '/emb_matrix.pb')
+else:
+    emb1 = torch.load(args.emb + '/sem_matrix.pb')
+    emb2 = torch.load(args.emb + '/' + args.lang + '_syn_matrix.pb')
+    emb = torch.cat((emb1, emb2), dim=1)
 
-embedding_dim = sem_emb.size(1)
+
+embedding_dim = emb.size(1)
 print(len(vocab))
 
 print('Loaded vocab and embeddings')
 
-gold_label2idx = {'entailment': 0, 'contradiction': 1,'neutral': 2}
+gold_label2idx = {'entailment': 0, 'contradiction': 1, 'neutral': 2}
 
 def convert_seq_to_id(sent):
     words_list = sent.split()
@@ -94,10 +105,11 @@ def get_num_lines(file_path):
 
 def load_dataset(mode='train'):
     s1, s2, label = [], [], []
-    with open(os.path.join(args.data, 'xnli_1.0_' + mode + '.jsonl'), 'r') as f:
-        for lines in tqdm(f, total=get_num_lines(os.path.join(args.data, 'xnli_1.0_' + mode + '.jsonl'))):
+    with open(os.path.join(args.data, 'xnli.' + mode + '.jsonl'), 'r') as f:
+        for lines in tqdm(f, total=get_num_lines(os.path.join(args.data, 'xnli.' + mode + '.jsonl'))):
             lines = json.loads(lines.rstrip('\n'))
-            if lines['']
+            if lines['language'] != args.lang:
+                continue
             try:
                 label.append(gold_label2idx[lines['gold_label']])
                 s1.append(convert_seq_to_id(lines['sentence1']))
@@ -109,30 +121,25 @@ def load_dataset(mode='train'):
 
 print('Loading dataset...')
 
-if os.path.exists('data/multinli_train.pb') and os.path.exists('data/multinli_val.pb'):
-    train_data = pickle.load(open('data/multinli_train.pb', 'rb'))
-    val_data = pickle.load(open('data/multinli_val.pb', 'rb'))
-    # test_data = pickle.load(open('data/multinli_test.pb', 'rb'))
-
-    train_s1 , train_s2, train_y = train_data[0], train_data[1], train_data[2]
-    val_s1 , val_s2, val_y = val_data[0], val_data[1], val_data[2]
-
-    assert len(train_s1) == len(train_y), "Length Mismatch"
-    assert len(train_s2) == len(train_y), "Length Mismatch"
-
-    assert len(val_s1) == len(val_y), "Length Mismatch"
-    assert len(val_s1) == len(val_y), "Length Mismatch"
-
-
-    # test_s1 , test_s2, test_y = test_data[0], test_data[1], test_data[2]
-else:
-    train_s1 , train_s2, train_y = load_dataset('train')
-    val_s1 , val_s2, val_y = load_dataset('dev_matched')
-    # test_s1 , test_s2, test_y = load_dataset('test')
-
-    pickle.dump((train_s1, train_s2, train_y), open('data/multinli_train.pb', 'wb'))
-    pickle.dump((val_s1, val_s2, val_y), open('data/multinli_val.pb', 'wb'))
-    # pickle.dump((test_s1, test_s2, test_y), open('data/multinli_test.pb', 'wb'))
+# if os.path.exists('data/multinli_train.pb') and os.path.exists('data/multinli_val.pb'):
+#     train_data = pickle.load(open('data/multinli_train.pb', 'rb'))
+#     val_data = pickle.load(open('data/multinli_val.pb', 'rb'))
+#     # test_data = pickle.load(open('data/multinli_test.pb', 'rb'))
+#
+#     train_s1 , train_s2, train_y = train_data[0], train_data[1], train_data[2]
+#     val_s1 , val_s2, val_y = val_data[0], val_data[1], val_data[2]
+#
+#     assert len(train_s1) == len(train_y), "Length Mismatch"
+#     assert len(train_s2) == len(train_y), "Length Mismatch"
+#
+#     assert len(val_s1) == len(val_y), "Length Mismatch"
+#     assert len(val_s1) == len(val_y), "Length Mismatch"
+#
+#
+#     # test_s1 , test_s2, test_y = test_data[0], test_data[1], test_data[2]
+# else:
+test_s1 , test_s2, test_y = load_dataset('test')
+val_s1 , val_s2, val_y = load_dataset('dev')
 
 print('Finished loading dataset.')
 
@@ -140,14 +147,14 @@ class CBOW(nn.Module):
     def __init__(self, num_labels, vocab_size, embedding_dim, pretrained_embed_path, pad_idx):
         super(CBOW, self).__init__()
         self.emb = nn.Embedding(vocab_size, embedding_dim, padding_idx=pad_idx)
-        self.l1 = nn.Linear(4*embedding_dim, 300)
-        self.l2 = nn.Linear(300, 300)
-        self.l3 = nn.Linear(300, 300)
-        self.l4 = nn.Linear(300, num_labels)
+        self.l1 = nn.Linear(4*embedding_dim, args.hidden_dim)
+        self.l2 = nn.Linear(args.hidden_dim, args.hidden_dim)
+        self.l3 = nn.Linear(args.hidden_dim, args.hidden_dim)
+        self.l4 = nn.Linear(args.hidden_dim, num_labels)
         self.relu = nn.ReLU()
         self.pad_idx = pad_idx
 
-        self.init_weights(pretrained_embed_path)
+        # self.init_weights(pretrained_embed_path)
 
     def init_weights(self, pretrained_embed_path):
         # return
@@ -156,13 +163,14 @@ class CBOW(nn.Module):
 
     def forward(self, x1, x2):
         emb_out1 = self.emb(x1)
-        # print(emb_out1.size())
-        # mask1 = 1 - (x1 == self.pad_idx).float()
-        sentence_emb1 = torch.mean(emb_out1, dim=1)
+        mask1 = 1 - (x1 == self.pad_idx).float()
+        batch_len = torch.sum(mask1, dim=1).unsqueeze(1)
+        sentence_emb1 = torch.div(torch.sum(emb_out1, dim=1) , batch_len)
 
         emb_out2 = self.emb(x2)
-        # mask2 = 1 - (x2 == self.pad_idx).float()
-        sentence_emb2 = torch.mean(emb_out2, dim=1)
+        mask2 = 1 - (x2 == self.pad_idx).float()
+        batch_len = torch.sum(mask2, dim=1).unsqueeze(1)
+        sentence_emb2 = torch.div(torch.sum(emb_out2, dim=1) , batch_len)
 
         # sentence_emb = torch.cat((sentence_emb1, sentence_emb2), dim=1)
         sentence_emb = torch.cat((sentence_emb1, sentence_emb2, torch.abs(sentence_emb1-sentence_emb2), sentence_emb1*sentence_emb2), dim=1)
@@ -170,8 +178,11 @@ class CBOW(nn.Module):
         out = self.l4(self.relu(self.l3(self.relu(self.l2(self.relu(self.l1(sentence_emb)))))))
         return out
 
-cbow = CBOW(len(gold_label2idx.keys()), len(vocab), embedding_dim, syn_emb, w2idx['<pad>']).to(device)
+cbow = CBOW(len(gold_label2idx.keys()), len(vocab), embedding_dim, emb, w2idx['<pad>']).to(device)
 cbow = torch.load(args.model)
+# cbow.init_weights(emb)
+optimizer = optim.Adam(cbow.parameters(), lr=1e-4)
+criterion = nn.CrossEntropyLoss()
 
 def pad_sequences(s):
     pad_token = w2idx['<pad>']

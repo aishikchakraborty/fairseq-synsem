@@ -31,6 +31,7 @@ idx2idx2lang = {i.item():idx for idx, i in enumerate(lang2idx2idx)}
 embed_matrix = model.models['de-en'].encoder.embed_tokens.weight
 print(embed_matrix.size())
 sem_matrix = torch.mm(embed_matrix, M)
+torch.save(embed_matrix, 'embeddings/emb_matrix.pb')
 torch.save(sem_matrix, 'embeddings/sem_matrix.pb')
 
 for i in range(no_langs):

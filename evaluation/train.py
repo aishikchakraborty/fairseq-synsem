@@ -30,13 +30,13 @@ parser.add_argument('--gpu', type=int, default=0,
                     help='use gpu x')
 parser.add_argument('--log-interval', type=int, default=200, metavar='N',
                     help='report interval')
-parser.add_argument('--epochs', type=int, default=100, metavar='N',
+parser.add_argument('--epochs', type=int, default=5, metavar='N',
                     help='epochs')
 parser.add_argument('--batch-size', type=int, default=32, metavar='N',
                     help='batch size')
 parser.add_argument('--save', type=str, default='models/',
                     help='path to save the final model')
-parser.add_argument('--hidden-dim', type=int, default=300,
+parser.add_argument('--hidden-dim', type=int, default=500,
                     help='hidden dimension size')
 parser.add_argument('--save-emb', type=str, default='embeddings/',
                     help='path to save the final model')
@@ -67,10 +67,11 @@ vocab = torch.load(args.emb + '/vocab.pb')
 print(vocab[:10])
 w2idx = {w:idx for idx, w in enumerate(vocab)}
 
+emb = torch.load(args.emb + '/emb_matrix.pb')
 sem_emb = torch.load(args.emb + '/sem_matrix.pb')
 syn_emb = torch.load(args.emb + '/en_syn_matrix.pb')
 
-embedding_dim = sem_emb.size(1)
+embedding_dim = emb.size(1)
 print(len(vocab))
 
 print('Loaded vocab and embeddings')
@@ -150,7 +151,7 @@ class CBOW(nn.Module):
         self.relu = nn.ReLU()
         self.pad_idx = pad_idx
 
-        self.init_weights(pretrained_embed_path)
+        # self.init_weights(pretrained_embed_path)
 
     def init_weights(self, pretrained_embed_path):
         # return
@@ -159,13 +160,14 @@ class CBOW(nn.Module):
 
     def forward(self, x1, x2):
         emb_out1 = self.emb(x1)
-        # print(emb_out1.size())
-        # mask1 = 1 - (x1 == self.pad_idx).float()
-        sentence_emb1 = torch.mean(emb_out1, dim=1)
+        mask1 = 1 - (x1 == self.pad_idx).float()
+        batch_len = torch.sum(mask1, dim=1).unsqueeze(1)
+        sentence_emb1 = torch.div(torch.sum(emb_out1, dim=1) , batch_len)
 
         emb_out2 = self.emb(x2)
-        # mask2 = 1 - (x2 == self.pad_idx).float()
-        sentence_emb2 = torch.mean(emb_out2, dim=1)
+        mask2 = 1 - (x2 == self.pad_idx).float()
+        batch_len = torch.sum(mask2, dim=1).unsqueeze(1)
+        sentence_emb2 = torch.div(torch.sum(emb_out2, dim=1) , batch_len)
 
         # sentence_emb = torch.cat((sentence_emb1, sentence_emb2), dim=1)
         sentence_emb = torch.cat((sentence_emb1, sentence_emb2, torch.abs(sentence_emb1-sentence_emb2), sentence_emb1*sentence_emb2), dim=1)
@@ -174,7 +176,7 @@ class CBOW(nn.Module):
         return out
 
 cbow = CBOW(len(gold_label2idx.keys()), len(vocab), embedding_dim, syn_emb, w2idx['<pad>']).to(device)
-optimizer = optim.Adam(cbow.parameters(), lr=1e-3)
+optimizer = optim.Adam(cbow.parameters(), lr=1e-4)
 criterion = nn.CrossEntropyLoss()
 
 def pad_sequences(s):
@@ -283,10 +285,12 @@ def train():
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            torch.save(cbow, 'cbow_model.pb')
+            torch.save(cbow, 'cbow_model_emb.pb')
+            print('Model Saved')
+            patience = 0
         else:
             patience += 1
-            if patience <= 3:
+            if patience >= 3:
                 print('Exiting from Training. Early Stopping. ')
                 break
 
